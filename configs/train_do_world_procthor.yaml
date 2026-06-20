@@ -1,0 +1,27 @@
+# @package _global_
+defaults:
+  - train_do_world
+  - _self_
+
+experiment: "do_world_procthor"
+
+model:
+  env:
+    suite: "procthor"
+    name: "FloorPlan1"
+    image_size: [ 128, 128 ]
+    max_episode_steps: 200
+    action_repeat: 1
+
+  dynamics_predictor:
+    num_mechanisms: 12
+
+  counterfactual_mpc:
+    robustness_weight: 0.5
+    discrete_actions:
+      - [ 1, 0, 0, 0, 0, 0 ]
+      - [ 0, 1, 0, 0, 0, 0 ]
+      - [ 0, 0, 1, 0, 0, 0 ]
+      - [ 0, 0, 0, 1, 0, 0 ]
+      - [ 0, 0, 0, 0, 1, 0 ]
+      - [ 0, 0, 0, 0, 0, 1 ]

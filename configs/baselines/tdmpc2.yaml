@@ -1,0 +1,9 @@
+name: "tdmpc2"
+description: "TD-MPC2 external baseline command template."
+install_hint: "Install an official or project-approved TD-MPC2 implementation and set command_template."
+command_template:
+  - "python"
+  - "train.py"
+  - "task={task}"
+  - "seed={seed}"
+  - "work_dir={output_dir}"

@@ -1,12 +1,15 @@
 import os
 import tempfile
+from pathlib import Path
 
 import numpy as np
 import torch
 
+from aggregate_do_world_results import aggregate, write_csv, write_markdown
 from datasets.do_world import DoWorldNPZDataset
 from modeling.sold.do_world import CounterfactualMPCPlanner, make_do_world_dynamics_model
-from utils.language import HashingLanguageEncoder
+from run_do_world_experiments import build_commands
+from utils.language import HashingLanguageEncoder, make_language_encoder
 
 
 def test_core_do_world_paths() -> None:
@@ -51,6 +54,8 @@ def test_core_do_world_paths() -> None:
     emb = encoder.encode(("red block pushes blue cube", "remove distractor object"))
     lang_loss = model.language_alignment_loss(emb, torch.tensor((0, 1)))
     assert lang_loss.ndim == 0
+    factory_encoder = make_language_encoder("hashing", embedding_dim=12)
+    assert factory_encoder.encode(("push",)).shape == (1, 12)
 
     class Reward(torch.nn.Module):
         def forward(self, slots, start=0):
@@ -107,7 +112,34 @@ def test_do_world_npz_dataset() -> None:
         assert sample["mechanism_label"].shape == (4,)
 
 
+def test_experiment_and_result_utilities() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "experiments")
+        commands = build_commands(
+            benchmarks=("causalworld",),
+            seeds=(0,),
+            include_ablations=True,
+            baselines=(),
+            output_root=Path(root),
+        )
+        assert len(commands) == 5
+
+        metrics_dir = os.path.join(root, "causalworld", "do_world", "seed_0")
+        os.makedirs(metrics_dir)
+        with open(os.path.join(metrics_dir, "do_world_metrics.jsonl"), "w") as file:
+            file.write('{"episode_return": 1.0, "success_rate": 0.5, "prediction_error": 0.25}\n')
+
+        rows = aggregate(Path(root), ["episode_return", "success_rate", "prediction_error"])
+        assert len(rows) == 1
+        assert rows[0]["episode_return_mean"] == 1.0
+        write_csv(rows, Path(tmp) / "summary.csv")
+        write_markdown(rows, Path(tmp) / "summary.md")
+        assert os.path.exists(os.path.join(tmp, "summary.csv"))
+        assert os.path.exists(os.path.join(tmp, "summary.md"))
+
+
 if __name__ == "__main__":
     test_core_do_world_paths()
     test_do_world_npz_dataset()
+    test_experiment_and_result_utilities()
     print("do_world smoke tests passed")

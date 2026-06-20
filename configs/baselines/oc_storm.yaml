@@ -1,0 +1,12 @@
+name: "oc_storm"
+description: "OC-STORM external baseline command template."
+install_hint: "Install an official or project-approved OC-STORM implementation and set command_template."
+command_template:
+  - "python"
+  - "train.py"
+  - "--env"
+  - "{task}"
+  - "--seed"
+  - "{seed}"
+  - "--logdir"
+  - "{output_dir}"

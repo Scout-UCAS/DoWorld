@@ -1,0 +1,11 @@
+# @package _global_
+defaults:
+  - ../train_do_world
+  - _self_
+
+experiment: "do_world_ablate_no_language_alignment"
+
+model:
+  dynamics_predictor:
+    language_embedding_dim: null
+    language_loss_weight: 0.0

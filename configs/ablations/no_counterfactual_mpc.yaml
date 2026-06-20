@@ -1,0 +1,13 @@
+# @package _global_
+defaults:
+  - ../train_do_world
+  - _self_
+
+experiment: "do_world_ablate_no_counterfactual_mpc"
+
+model:
+  planning_mode: "actor"
+  counterfactual_mpc:
+    robustness_weight: 0.0
+    gap_weight: 0.0
+    num_counterfactuals: 0

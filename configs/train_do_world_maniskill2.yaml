@@ -1,0 +1,17 @@
+# @package _global_
+defaults:
+  - train_do_world
+  - _self_
+
+experiment: "do_world_maniskill2"
+
+model:
+  env:
+    suite: "maniskill2"
+    name: "PickCube-v0"
+    image_size: [ 128, 128 ]
+    max_episode_steps: 100
+    action_repeat: 1
+
+  counterfactual_mpc:
+    robustness_weight: 0.5

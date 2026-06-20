@@ -1,0 +1,13 @@
+# @package _global_
+defaults:
+  - ../train_do_world
+  - _self_
+
+experiment: "do_world_ablate_no_mechanism_library"
+
+model:
+  dynamics_predictor:
+    num_mechanisms: 1
+    mechanism_entropy_loss_weight: 0.0
+    mechanism_usage_loss_weight: 0.0
+    mechanism_invariance_loss_weight: 0.0

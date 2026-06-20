@@ -1,0 +1,10 @@
+# @package _global_
+defaults:
+  - ../train_do_world
+  - _self_
+
+experiment: "do_world_ablate_no_intervention_loss"
+
+model:
+  intervention_loss_weight: 0.0
+  pseudo_intervention_loss_weight: 0.0

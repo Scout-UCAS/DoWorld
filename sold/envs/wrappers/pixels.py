@@ -1,8 +1,12 @@
 import gym
-from multi_object_fetch.env import MultiObjectFetchEnv
 from PIL import Image
 import numpy as np
 from typing import Tuple
+
+try:
+    from multi_object_fetch.env import MultiObjectFetchEnv
+except ImportError:
+    MultiObjectFetchEnv = None
 
 
 class Pixels(gym.Wrapper):
@@ -20,7 +24,7 @@ class Pixels(gym.Wrapper):
         return self._get_obs()
 
     def _get_obs(self) -> np.ndarray:
-        if isinstance(self.env.unwrapped, MultiObjectFetchEnv):
+        if MultiObjectFetchEnv is not None and isinstance(self.env.unwrapped, MultiObjectFetchEnv):
             image = self.env.render(mode='rgb_array', size=self.image_size)
         else:
             image = Image.fromarray(self.env.render(mode='rgb_array'))

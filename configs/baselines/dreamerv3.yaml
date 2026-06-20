@@ -1,0 +1,10 @@
+name: "dreamerv3"
+description: "DreamerV3 external baseline command template."
+install_hint: "Install an official or project-approved DreamerV3 implementation and set command_template."
+command_template:
+  - "python"
+  - "-m"
+  - "dreamerv3.train"
+  - "--task={task}"
+  - "--seed={seed}"
+  - "--logdir={output_dir}"

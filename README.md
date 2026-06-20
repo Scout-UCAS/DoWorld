@@ -21,13 +21,23 @@ counterfactual rollouts.
 ```text
 configs/
   train_do_world.yaml          Do-World training config
+  train_do_world_causalworld.yaml
+  train_do_world_maniskill2.yaml
+  train_do_world_procthor.yaml
   evaluate_do_world.yaml       Do-World evaluation config
+  ablations/                   Ablation configs
+  baselines/                   External baseline command manifests
 sold/
   train_sold.py                Training entry point with Do-World hooks
   evaluate_do_world.py         Do-World metric evaluation
+  evaluate_do_world_ood.py     OOD/intervention evaluation command builder
+  run_do_world_experiments.py  Benchmark, ablation, and baseline runner
+  aggregate_do_world_results.py Result table generator
+  preprocess_do_world_language.py Language embedding preprocessor
   modeling/sold/do_world.py    Causal mechanism library and Counterfactual MPC
   datasets/do_world.py         Offline NPZ dataset loader for interventions/language fields
-  utils/language.py            Dependency-free frozen text encoder for language descriptions
+  envs/from_*.py               Optional benchmark adapters
+  utils/language.py            Frozen text encoder backends
   tests/smoke_do_world.py      Lightweight smoke tests
 ```
 
@@ -82,6 +92,16 @@ The config uses:
 - `pseudo_intervention_loss_weight` for pseudo object/relation intervention supervision.
 - `intervention_loss_weight` for true intervention supervision when intervention fields are present.
 
+Benchmark configs are provided for:
+
+```bash
+PYTHONPATH=sold python sold/train_sold.py --config-name train_do_world_causalworld
+PYTHONPATH=sold python sold/train_sold.py --config-name train_do_world_maniskill2
+PYTHONPATH=sold python sold/train_sold.py --config-name train_do_world_procthor
+```
+
+These configs require their corresponding external simulators to be installed.
+
 ## Data Fields
 
 Ordinary online replay data can be used without extra fields. If intervention or language supervision is available,
@@ -102,7 +122,19 @@ mechanism_label
 ```
 
 Offline NPZ episodes can be loaded with `sold/datasets/do_world.py`. Required keys are `obs` or `images`, and `action`
-or `actions`. Optional text descriptions are converted into deterministic embeddings by `sold/utils/language.py`.
+or `actions`. Optional text descriptions can be encoded with hashing, sentence-transformers, or HuggingFace backends.
+
+Precompute language embeddings with:
+
+```bash
+PYTHONPATH=sold python sold/preprocess_do_world_language.py --root PATH_TO_DATA --backend hashing
+```
+
+For a frozen semantic text model, install `sentence-transformers` or `transformers` and use:
+
+```bash
+PYTHONPATH=sold python sold/preprocess_do_world_language.py --root PATH_TO_DATA --backend sentence_transformers
+```
 
 ## Evaluation
 
@@ -124,6 +156,37 @@ The evaluator reports:
 - factual-counterfactual gap
 - relation sparsity
 - mechanism entropy and diversity
+
+Build OOD/intervention evaluation commands with:
+
+```bash
+PYTHONPATH=sold python sold/evaluate_do_world_ood.py \
+  --checkpoint-path PATH_TO_CHECKPOINT \
+  --env-name HELD_OUT_ENV_NAME
+```
+
+Add `--execute` to run the generated commands.
+
+## Benchmarks, Baselines, And Ablations
+
+Create a dry-run command manifest for all supported benchmarks:
+
+```bash
+PYTHONPATH=sold python sold/run_do_world_experiments.py \
+  --benchmarks causalworld,maniskill2,procthor \
+  --seeds 0,1,2 \
+  --include-ablations \
+  --baselines dreamerv3,tdmpc2,oc_storm
+```
+
+Add `--execute` to launch the commands. External baselines are configured in `configs/baselines/`; install the selected
+baseline implementation and edit its command template if your local entry point differs.
+
+Aggregate JSONL metrics into CSV and Markdown tables with:
+
+```bash
+PYTHONPATH=sold python sold/aggregate_do_world_results.py --root experiments/do_world_benchmarks
+```
 
 ## Main Components
 
@@ -158,5 +221,7 @@ categorical CEM over a fixed action table.
 
 ## Current Status
 
-The repository contains the complete Do-World implementation layer, training hooks, evaluation script, and smoke tests.
-Full benchmark training still depends on installing the target simulator environments and preparing task datasets.
+The repository contains the Do-World implementation layer, benchmark adapters, training hooks, evaluation scripts,
+baseline command manifests, ablation configs, and smoke tests. It does not ship fabricated benchmark numbers or trained
+checkpoints; those must be produced by installing the target simulators/baselines, preparing task datasets, and running
+the experiment commands above.

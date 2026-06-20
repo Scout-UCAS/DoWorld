@@ -24,7 +24,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from utils.language import HashingLanguageEncoder
+from utils.language import make_language_encoder
 
 
 class DoWorldNPZDataset(Dataset):
@@ -34,7 +34,9 @@ class DoWorldNPZDataset(Dataset):
         data_dir: str,
         split: str,
         sequence_length: int,
+        language_backend: str = "hashing",
         language_embedding_dim: int = 512,
+        language_model_name: str | None = None,
     ) -> None:
         super().__init__()
         self.path = path
@@ -42,7 +44,11 @@ class DoWorldNPZDataset(Dataset):
         self.split = split
         self.sequence_length = sequence_length
         self.split_path = os.path.join(self.path, self.data_dir, split)
-        self.language_encoder = HashingLanguageEncoder(language_embedding_dim)
+        self.language_encoder = make_language_encoder(
+            backend=language_backend,
+            embedding_dim=language_embedding_dim,
+            model_name=language_model_name,
+        )
 
         self.episode_paths: List[str] = []
         for episode_dir in os.listdir(self.split_path):

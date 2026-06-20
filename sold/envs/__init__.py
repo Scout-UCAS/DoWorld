@@ -16,6 +16,15 @@ def make_env(suite: str, name: str, image_size: Tuple[int, int], max_episode_ste
     elif suite == 'dmcontrol':
         from envs.from_dmcontrol import make_env as make_dmcontrol_env
         env = make_dmcontrol_env(name, image_size, max_episode_steps, action_repeat, seed)
+    elif suite == 'causalworld':
+        from envs.from_causalworld import make_env as make_causalworld_env
+        env = make_causalworld_env(name, image_size, max_episode_steps, action_repeat, seed)
+    elif suite == 'maniskill2':
+        from envs.from_maniskill2 import make_env as make_maniskill2_env
+        env = make_maniskill2_env(name, image_size, max_episode_steps, action_repeat, seed)
+    elif suite == 'procthor':
+        from envs.from_procthor import make_env as make_procthor_env
+        env = make_procthor_env(name, image_size, max_episode_steps, action_repeat, seed)
     elif suite == 'survival':
         from envs.from_survival import make_env as make_survival_env
         from envs.wrappers.to_tensordict import ToTensorDict
