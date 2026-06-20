@@ -68,6 +68,37 @@ python train_sold.py
 ```
 All results are stored in the [`experiments`](./experiments) directory.
 
+### Training Do-World
+
+This fork also includes a Do-World extension on top of SOLD. It replaces the monolithic slot dynamics model with an
+object-level neural causal mechanism library and can use Counterfactual MPC during evaluation. The Do-World dynamics
+model supports object removal, relation cutting, and mechanism perturbation interventions in latent slot space.
+
+To train with the Do-World dynamics model, use the dedicated config:
+```bash
+PYTHONPATH=sold python sold/train_sold.py --config-name train_do_world
+```
+
+The main implementation lives in [`sold/modeling/sold/do_world.py`](./sold/modeling/sold/do_world.py). The original
+SOLD configuration remains available through [`configs/train_sold.yaml`](./configs/train_sold.yaml).
+
+Do-World training accepts ordinary SOLD online replay data and optional intervention/language tensors. For true
+intervention supervision, batches can include `intervention_source_slots` or `intervention_obs`, `intervention_action`,
+`intervention_target_slots` or `intervention_next_obs`, plus one or more of `intervention_object_mask`,
+`intervention_relation_mask`, and `intervention_mechanism_scale`. Language supervision uses `language_embedding` and
+`mechanism_label`; [`sold/utils/language.py`](./sold/utils/language.py) provides a dependency-free frozen text encoder
+for preprocessing descriptions into embeddings. Offline NPZ episodes with these fields can be loaded with
+[`sold/datasets/do_world.py`](./sold/datasets/do_world.py).
+
+To evaluate Do-World-specific metrics for a checkpoint, run:
+```bash
+PYTHONPATH=sold python sold/evaluate_do_world.py checkpoint_path=PATH_TO_CHECKPOINT
+```
+
+The evaluator logs task return/success when available, one-step and multi-step slot prediction error, intervention
+error for episodes that provide true intervention fields, counterfactual return drop, factual-counterfactual gap,
+relation sparsity, and mechanism usage diversity.
+
 
 <details>
     <summary><i>Show sample training outputs</i></summary>

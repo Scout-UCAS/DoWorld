@@ -1,0 +1,9 @@
+defaults:
+  - evaluate_sold
+  - _self_
+
+mode: "eval"
+horizon: 15
+num_counterfactuals: 4
+relation_threshold: 0.1
+discount_factor: 0.99

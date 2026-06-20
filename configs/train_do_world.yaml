@@ -1,0 +1,47 @@
+# @package _global_
+defaults:
+  - train_sold
+  - _self_
+
+experiment: "do_world"
+
+model:
+  planning_mode: "counterfactual_mpc"
+  counterfactual_mpc_modes: [ "eval" ]
+  intervention_loss_weight: 1.0
+  pseudo_intervention_loss_weight: 0.1
+
+  dynamics_predictor:
+    _target_: modeling.sold.do_world.make_do_world_dynamics_model
+    _partial_: True
+    hidden_dim: 512
+    num_mechanisms: 8
+    message_dim: 256
+    action_embed_dim: 128
+    num_mlp_layers: 3
+    residual: True
+    teacher_forcing: False
+    sparse_loss_weight: 0.001
+    mechanism_entropy_loss_weight: 0.001
+    mechanism_usage_loss_weight: 0.001
+    mechanism_invariance_loss_weight: 0.05
+    counterfactual_mechanism_scale: 0.5
+    language_embedding_dim: 512
+    language_temperature: 0.07
+    language_loss_weight: 0.1
+
+  counterfactual_mpc:
+    horizon: 15
+    num_candidates: 1024
+    num_elites: 64
+    num_iterations: 5
+    discount_factor: 0.99
+    robustness_weight: 0.5
+    gap_weight: 0.3
+    num_counterfactuals: 4
+    robustness_reduction: "min"
+    init_std: 1.0
+    min_std: 0.05
+    momentum: 0.1
+    use_actor_prior: True
+    discrete_actions: null  # Optional list of action vectors for categorical CEM in discrete-action domains.

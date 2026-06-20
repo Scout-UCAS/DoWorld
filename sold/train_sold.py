@@ -5,6 +5,7 @@ import copy
 import gym
 import hydra
 from lightning.pytorch.utilities.types import OptimizerLRScheduler, STEP_OUTPUT
+from modeling.sold.do_world import CounterfactualMPCPlanner
 from modeling.distributions import Moments
 from modeling.autoencoder.base import Autoencoder
 import numpy as np
@@ -30,7 +31,11 @@ class SOLDModule(OnlineModule):
                  actor_entropy_loss_weight: float, actor_gradients: str, return_lambda: float, discount_factor: float,
                  critic_ema_decay: float, env: gym.Env, max_steps: int, num_seed: int, update_freq: int,
                  num_updates: int, eval_freq: int, num_eval_episodes: int, batch_size: int, buffer_capacity: int,
-                 save_replay_buffer: bool) -> None:
+                 save_replay_buffer: bool, planning_mode: str = "actor",
+                 counterfactual_mpc_modes: Tuple[str, ...] = ("eval",),
+                 counterfactual_mpc: Dict[str, Any] | None = None,
+                 intervention_loss_weight: float = 1.0,
+                 pseudo_intervention_loss_weight: float = 0.1) -> None:
 
         self.min_num_context, self.max_num_context = (num_context, num_context) if isinstance(num_context, int) else num_context
         if self.min_num_context > self.max_num_context:
@@ -72,12 +77,109 @@ class SOLDModule(OnlineModule):
         self.return_lambda = return_lambda
         self.discount_factor = discount_factor
         self.critic_ema_decay = critic_ema_decay
+        self.planning_mode = planning_mode
+        self.counterfactual_mpc_modes = set(counterfactual_mpc_modes)
+        self.intervention_loss_weight = intervention_loss_weight
+        self.pseudo_intervention_loss_weight = pseudo_intervention_loss_weight
+        self.counterfactual_mpc = None
+        if counterfactual_mpc is not None:
+            self.counterfactual_mpc = CounterfactualMPCPlanner(
+                action_low=env.action_space.low,
+                action_high=env.action_space.high,
+                **dict(counterfactual_mpc),
+            )
 
         self.return_moments = Moments()
         self.register_buffer("discounts", torch.full((1, self.imagination_horizon), self.discount_factor))
         self.discounts = torch.cumprod(self.discounts, dim=1) / self.discount_factor
 
         self.current_losses = defaultdict(list)
+
+    def _squeeze_loader_batch(self, value: Any) -> Any:
+        if isinstance(value, torch.Tensor) and value.dim() > 0 and value.shape[0] == 1:
+            return value.squeeze(0)
+        return value
+
+    def _last_step(self, value: torch.Tensor, expected_last_dim: int | None = None) -> torch.Tensor:
+        value = self._squeeze_loader_batch(value)
+        if expected_last_dim is not None and value.shape[-1] != expected_last_dim:
+            raise ValueError(f"Expected last dim {expected_last_dim}, got {value.shape[-1]}.")
+        if expected_last_dim == self.env.action_space.shape[0] and value.dim() == 3:
+            return value[:, -1]
+        if value.dim() >= 4:
+            return value[:, -1]
+        return value
+
+    def _encode_intervention_images(
+        self,
+        images: torch.Tensor,
+        actions: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        images = self._squeeze_loader_batch(images).to(self.device) / 255.
+        if images.dim() == 4:
+            images = images.unsqueeze(1)
+        if actions is None:
+            action = torch.full(
+                (images.shape[0], images.shape[1], self.env.action_space.shape[0]),
+                float("nan"),
+                device=images.device,
+                dtype=images.dtype,
+            )
+        else:
+            action = self._squeeze_loader_batch(actions).to(images.device)
+            if action.dim() == 2:
+                action = action.unsqueeze(1).expand(-1, images.shape[1], -1)
+        return self.autoencoder.encode(images, action).detach()[:, -1]
+
+    def _intervention_dict_from_batch(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        intervention = {}
+        key_map = {
+            "intervention_object_mask": "object_mask",
+            "intervention_relation_mask": "relation_mask",
+            "intervention_mechanism_scale": "mechanism_scale",
+        }
+        for batch_key, intervention_key in key_map.items():
+            if batch_key in batch:
+                intervention[intervention_key] = self._squeeze_loader_batch(batch[batch_key]).to(self.device)
+        return intervention
+
+    def _compute_true_intervention_loss(self, batch: Dict[str, Any]) -> torch.Tensor | None:
+        if not hasattr(self.dynamics_predictor, "intervention_consistency_loss"):
+            return None
+
+        has_slot_targets = (
+            ("intervention_source_slots" in batch or "intervention_slots" in batch)
+            and ("intervention_target_slots" in batch or "intervention_next_slots" in batch)
+        )
+        has_image_targets = "intervention_obs" in batch and "intervention_next_obs" in batch
+        if not has_slot_targets and not has_image_targets:
+            return None
+
+        if "intervention_action" in batch:
+            intervention_actions = self._last_step(batch["intervention_action"], self.env.action_space.shape[0]).to(self.device)
+        elif "intervention_actions" in batch:
+            intervention_actions = self._last_step(batch["intervention_actions"], self.env.action_space.shape[0]).to(self.device)
+        else:
+            return None
+
+        if has_slot_targets:
+            source_key = "intervention_source_slots" if "intervention_source_slots" in batch else "intervention_slots"
+            target_key = "intervention_target_slots" if "intervention_target_slots" in batch else "intervention_next_slots"
+            source_slots = self._last_step(batch[source_key], self.autoencoder.slot_dim).to(self.device)
+            target_slots = self._last_step(batch[target_key], self.autoencoder.slot_dim).to(self.device)
+        else:
+            source_slots = self._encode_intervention_images(batch["intervention_obs"], batch.get("intervention_actions"))
+            target_slots = self._encode_intervention_images(batch["intervention_next_obs"], batch.get("intervention_actions"))
+
+        intervention = self._intervention_dict_from_batch(batch)
+        if not intervention:
+            return None
+        return self.dynamics_predictor.intervention_consistency_loss(
+            source_slots.detach(),
+            torch.nan_to_num(intervention_actions.detach()),
+            target_slots.detach(),
+            intervention,
+        )
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         return [torch.optim.Adam(self.dynamics_predictor.parameters(), lr=self.dynamics_learning_rate),
@@ -107,7 +209,7 @@ class SOLDModule(OnlineModule):
 
         # Learn to predict dynamics in slot-space.
         dynamics_optimizer.zero_grad()
-        outputs |= self.compute_dynamics_loss(images, slots, actions)
+        outputs |= self.compute_dynamics_loss(images, slots, actions, batch=batch)
         self.manual_backward(outputs["dynamics_loss"])
         self.clip_gradients(dynamics_optimizer, gradient_clip_val=self.dynamics_grad_clip, gradient_clip_algorithm="norm")
         dynamics_optimizer.step()
@@ -147,7 +249,8 @@ class SOLDModule(OnlineModule):
         self.log_gradients(model_names=("reward_predictor", "actor", "critic"))
         return outputs
 
-    def compute_dynamics_loss(self, images: torch.Tensor, slots: torch.Tensor, actions: torch.Tensor) -> Dict[str, Any]:
+    def compute_dynamics_loss(self, images: torch.Tensor, slots: torch.Tensor, actions: torch.Tensor,
+                              batch: Dict[str, Any] | None = None) -> Dict[str, Any]:
         self.dynamics_predictor.train()
         batch_size, sequence_length, num_slots, slot_dim = slots.size()
         num_context = torch.randint(self.min_num_context, self.max_num_context + 1, (1,)).item()
@@ -157,6 +260,41 @@ class SOLDModule(OnlineModule):
         future_outputs = self.autoencoder.decode(future_slots)
         slot_loss = F.mse_loss(future_slots, slots[:, num_context:num_context + self.imagination_horizon])
         image_loss = F.mse_loss(future_outputs["reconstructions"], images[:, num_context:num_context + self.imagination_horizon])
+        dynamics_loss = slot_loss + image_loss
+
+        outputs = {"slot_loss": slot_loss, "image_loss": image_loss}
+        if hasattr(self.dynamics_predictor, "auxiliary_losses"):
+            auxiliary_losses = self.dynamics_predictor.auxiliary_losses()
+            dynamics_loss = dynamics_loss + auxiliary_losses.get("do_world_regularization_loss", 0.0)
+            outputs.update(auxiliary_losses)
+
+        if (batch is not None
+                and hasattr(self.dynamics_predictor, "language_alignment_loss")
+                and "language_embedding" in batch
+                and "mechanism_label" in batch):
+            language_embeddings = batch["language_embedding"].squeeze(0).to(slots.device)
+            mechanism_labels = batch["mechanism_label"].squeeze(0).to(slots.device)
+            language_alignment_loss = self.dynamics_predictor.language_alignment_loss(
+                language_embeddings, mechanism_labels)
+            dynamics_loss = dynamics_loss + language_alignment_loss
+            outputs["language_alignment_loss"] = language_alignment_loss
+
+        if batch is not None:
+            true_intervention_loss = self._compute_true_intervention_loss(batch)
+            if true_intervention_loss is not None:
+                dynamics_loss = dynamics_loss + self.intervention_loss_weight * true_intervention_loss
+                outputs["intervention_consistency_loss"] = true_intervention_loss
+
+        if (self.pseudo_intervention_loss_weight > 0.0
+                and hasattr(self.dynamics_predictor, "pseudo_intervention_losses")
+                and num_context < sequence_length):
+            source_slots = slots[:, num_context - 1].detach()
+            target_next_slots = slots[:, num_context].detach()
+            source_actions = torch.nan_to_num(actions[:, num_context].detach())
+            pseudo_losses = self.dynamics_predictor.pseudo_intervention_losses(
+                source_slots, source_actions, target_next_slots)
+            dynamics_loss = dynamics_loss + self.pseudo_intervention_loss_weight * pseudo_losses["pseudo_intervention_loss"]
+            outputs.update(pseudo_losses)
 
         if self.after_eval:
             x_ticks = [f'T={0}']
@@ -174,7 +312,8 @@ class SOLDModule(OnlineModule):
                 [context_image, torch.ones(3, context_image.size(1), 2), future_image], dim=2)
             self.log("dynamics_prediction", dynamics_image)
 
-        return {"slot_loss": slot_loss, "image_loss": image_loss, "dynamics_loss": slot_loss + image_loss}
+        outputs["dynamics_loss"] = dynamics_loss
+        return outputs
 
     def compute_reward_loss(self, images: torch.Tensor, reconstructions: torch.Tensor, slots: torch.Tensor, rewards: torch.Tensor) -> Dict[str, Any]:
         is_firsts = torch.isnan(rewards)  # We add NaN as a reward on the first time-step.
@@ -314,6 +453,15 @@ class SOLDModule(OnlineModule):
 
         if mode == "random":
             selected_action = torch.from_numpy(self.env.action_space.sample().astype(np.float32))
+        elif (self.planning_mode == "counterfactual_mpc"
+              and self.counterfactual_mpc is not None
+              and mode in self.counterfactual_mpc_modes):
+            selected_action = self.counterfactual_mpc.plan(
+                self._slot_history,
+                self.dynamics_predictor,
+                self.reward_predictor,
+                actor=self.actor,
+            )
         else:
             action_dist = self.actor(self._slot_history, start=self._slot_history.shape[1] - 1)
             if mode == "train":
@@ -323,7 +471,9 @@ class SOLDModule(OnlineModule):
             else:
                 raise ValueError(f"Invalid mode: {mode}")
 
-        return selected_action.clamp_(self.env.action_space.low[0], self.env.action_space.high[0]).detach()
+        low = torch.as_tensor(self.env.action_space.low, device=selected_action.device, dtype=selected_action.dtype)
+        high = torch.as_tensor(self.env.action_space.high, device=selected_action.device, dtype=selected_action.dtype)
+        return torch.maximum(torch.minimum(selected_action, high), low).detach()
 
 
 @hydra.main(config_path="../configs", config_name="train_sold", version_base=None)
