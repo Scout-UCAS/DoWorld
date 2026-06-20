@@ -1,145 +1,162 @@
-# SOLD: Slot-Attention for Object-centric Latent Dynamics
+# Do-World
 
-**[AIS, University of Bonn](https://www.ais.uni-bonn.de/index.html)**
+Counterfactual world models for intervention-aware planning.
 
-[Malte Mosbach](https://maltemosbach.github.io/)&ast;, [Jan Niklas Ewertz]()&ast;, [Angel Villar-Corrales](http://angelvillarcorrales.com/templates/home.php), [Sven Behnke](https://www.ais.uni-bonn.de/behnke/)
+Do-World learns an object-level latent structural world model and uses it for robust planning under counterfactual
+interventions. Instead of only predicting the observed future, Do-World supports queries such as object removal,
+relation cutting, and local mechanism perturbation, then scores action sequences by comparing factual and
+counterfactual rollouts.
 
-[[`Paper`](https://arxiv.org/abs/2410.08822)] &nbsp; [[`Website`](https://slot-latent-dynamics.github.io/)] &nbsp; [[`BibTeX`](https://slot-latent-dynamics.github.io/bibtex.txt)]
+## Highlights
 
-**Slot-Attention for Object-centric Latent Dynamics (SOLD)** is a model-based reinforcement learning algorithm operating on a structured latent representation in its world model.
+- Object-level neural causal mechanism library in slot latent space.
+- Editable interventions: `do(remove object)`, `do(cut relation)`, and `do(perturb mechanism)`.
+- Counterfactual MPC with factual reward, robust counterfactual reward, and factual-counterfactual gap penalty.
+- Training hooks for true intervention consistency, pseudo-intervention supervision, and language-mechanism alignment.
+- Evaluation metrics for prediction error, intervention error, counterfactual drop, relation sparsity, and mechanism diversity.
+- Continuous-action CEM planning and optional discrete-action categorical CEM planning.
 
-![SOLD Overview](assets/sold_overview.png)
+## Project Layout
 
-
-[//]: # (<img src="docs/sample_rollout.png" width="100%"><br/>)
+```text
+configs/
+  train_do_world.yaml          Do-World training config
+  evaluate_do_world.yaml       Do-World evaluation config
+sold/
+  train_sold.py                Training entry point with Do-World hooks
+  evaluate_do_world.py         Do-World metric evaluation
+  modeling/sold/do_world.py    Causal mechanism library and Counterfactual MPC
+  datasets/do_world.py         Offline NPZ dataset loader for interventions/language fields
+  utils/language.py            Dependency-free frozen text encoder for language descriptions
+  tests/smoke_do_world.py      Lightweight smoke tests
+```
 
 ## Installation
-### Conda
-Start by installing the [multi-object-fetch](https://github.com/maltemosbach/multi-object-fetch) environment suite.
-Then add the SOLD dependencies to the conda environment by running:
+
+Create an environment with PyTorch and the project dependencies. A Conda environment template is available at:
+
 ```bash
 conda env update -n mof -f apptainer/environment.yml
 ```
 
-### Apptainer
-Alternatively, we provide an [`Apptainer`](apptainer/multi_object_fetch.def) build file to simplify installation.
-To build the `.sif` image, run:
-```bash
-cd apptainer && apptainer build sold.sif multi_object_fetch.def
-```
-To start a training run inside the container:
-```bash
-apptainer run --nv ../sold.sif python train_sold.py
-```
-> [!NOTE] 
->If you're on a SLURM cluster, you can submit training jobs using this container with the provided run script `sbatch slurm.sh train_sold.py`.
+For quick code-level testing, the minimum Python packages are:
 
+```bash
+pip install torch torchvision hydra-core lightning gym termcolor tensorboardX numpy pillow tqdm
+```
 
+The full online manipulation experiments additionally require the simulator dependencies used by the environment suite.
+
+## Quick Test
+
+Run the smoke test from the repository root:
+
+```bash
+PYTHONPATH=sold python sold/tests/smoke_do_world.py
+```
+
+Expected output:
+
+```text
+do_world smoke tests passed
+```
+
+You can also compile the main modules:
+
+```bash
+python -m compileall sold/modeling sold/train_sold.py sold/evaluate_do_world.py sold/datasets sold/utils sold/tests
+```
 
 ## Training
-The training routine consists of two stages: [pre-training a SAVi model](#pre-training-a-savi-model) and 
-[training a SOLD model](#training-a-sold-model) on top of it.
 
-### Pre-training a SAVi model
-The SAVi models (or autoencoders generally) are pre-trained on static datasets of random trajectories. 
-Such datasets can be generated using the following script:
-```bash
-python generate_dataset.py experiment=my_dataset env.name=ReachRed_0to4Distractors_Dense-v1
-```
+Train the Do-World model with:
 
-To train a SAVi model, specify the dataset to be trained on and model parameters such as the number of slots in [`train_autoencoder.yaml`](./configs/train_autoencoder.yaml) and run:
-```bash
-python train_autoencoder.py experiment=my_savi_model
-```
-
-<details>
-    <summary><i>Show sample pre-training results</i></summary>
-    Good SAVi models should learn to split the scene into meaningful objects and keep slots assigned to the same object over time.
-    Examples of SAVi models pre-trained for a reaching and picking task are shown below.
-    <img src="assets/savi_reach_red.png" width="49%" align="top"> <img src="assets/savi_pick_red.png" width="49%" align="top">
-</details>
-
-### Training a SOLD model
-
-To train SOLD, a checkpoint path to the pre-trained SAVi model is required, which can be specified in the [`train_sold.yaml`](./configs/train_sold.yaml) configuration file.
-Then, to start the training, run:
-```bash
-python train_sold.py
-```
-All results are stored in the [`experiments`](./experiments) directory.
-
-### Training Do-World
-
-This fork also includes a Do-World extension on top of SOLD. It replaces the monolithic slot dynamics model with an
-object-level neural causal mechanism library and can use Counterfactual MPC during evaluation. The Do-World dynamics
-model supports object removal, relation cutting, and mechanism perturbation interventions in latent slot space.
-
-To train with the Do-World dynamics model, use the dedicated config:
 ```bash
 PYTHONPATH=sold python sold/train_sold.py --config-name train_do_world
 ```
 
-The main implementation lives in [`sold/modeling/sold/do_world.py`](./sold/modeling/sold/do_world.py). The original
-SOLD configuration remains available through [`configs/train_sold.yaml`](./configs/train_sold.yaml).
+The config uses:
 
-Do-World training accepts ordinary SOLD online replay data and optional intervention/language tensors. For true
-intervention supervision, batches can include `intervention_source_slots` or `intervention_obs`, `intervention_action`,
-`intervention_target_slots` or `intervention_next_obs`, plus one or more of `intervention_object_mask`,
-`intervention_relation_mask`, and `intervention_mechanism_scale`. Language supervision uses `language_embedding` and
-`mechanism_label`; [`sold/utils/language.py`](./sold/utils/language.py) provides a dependency-free frozen text encoder
-for preprocessing descriptions into embeddings. Offline NPZ episodes with these fields can be loaded with
-[`sold/datasets/do_world.py`](./sold/datasets/do_world.py).
+- `modeling.sold.do_world.make_do_world_dynamics_model` for object-level causal dynamics.
+- `planning_mode: counterfactual_mpc` for evaluation-time planning.
+- `pseudo_intervention_loss_weight` for pseudo object/relation intervention supervision.
+- `intervention_loss_weight` for true intervention supervision when intervention fields are present.
 
-To evaluate Do-World-specific metrics for a checkpoint, run:
+## Data Fields
+
+Ordinary online replay data can be used without extra fields. If intervention or language supervision is available,
+Do-World will consume the following optional tensor fields from batches or offline NPZ episodes:
+
+```text
+intervention_source_slots
+intervention_target_slots
+intervention_obs
+intervention_next_obs
+intervention_action
+intervention_object_mask
+intervention_relation_mask
+intervention_mechanism_scale
+language_embedding
+language_description
+mechanism_label
+```
+
+Offline NPZ episodes can be loaded with `sold/datasets/do_world.py`. Required keys are `obs` or `images`, and `action`
+or `actions`. Optional text descriptions are converted into deterministic embeddings by `sold/utils/language.py`.
+
+## Evaluation
+
+Evaluate Do-World-specific metrics with:
+
 ```bash
 PYTHONPATH=sold python sold/evaluate_do_world.py checkpoint_path=PATH_TO_CHECKPOINT
 ```
 
-The evaluator logs task return/success when available, one-step and multi-step slot prediction error, intervention
-error for episodes that provide true intervention fields, counterfactual return drop, factual-counterfactual gap,
-relation sparsity, and mechanism usage diversity.
+The evaluator reports:
 
+- episode return and success rate when provided by the environment
+- one-step slot prediction error
+- multi-step slot prediction error
+- true intervention error when intervention targets are available
+- factual return
+- robust counterfactual return
+- counterfactual return drop
+- factual-counterfactual gap
+- relation sparsity
+- mechanism entropy and diversity
 
-<details>
-    <summary><i>Show sample training outputs</i></summary>
-    When training a SOLD model, you can check different visualisations to monitor the training progress. 
-    The <i>dynamics_prediction</i> plot highlights the differences between the ground truth and the predicted future states, and 
-    shows the forward prediction of each slot.
-    <p align="center">
-      <img src="assets/dynamics_reach_red.png" width="100%">
-    </p>
-    In addition, visualisations of <i>actor_attention</i> or <i>reward_predictor_attention</i>, as shown below, can be used to 
-    understand what the model is paying attention to when predicting the current reward, i.e. which elements of the scene 
-    the model considers to be reward-predictive.
-    <p align="center">
-      <img src="assets/reward_predictor_attention_reach_red.png" width="100%">
-    </p>
-</details>
+## Main Components
 
+### Object-Level Causal Dynamics
 
+`DoWorldDynamicsModel` decomposes slot dynamics into directed relation messages, a learned mechanism router, and a
+shared mechanism library. Each object slot is updated by a weighted mixture of local transition mechanisms.
 
-For further evaluation of a trained model or a set of models in a directory, you can run:
-```bash
-python evaluate_sold.py checkpoint_path=PATH_TO_CHECKPOINT(S)
-```
-which will log performance metrics and visualizations for the given checkpoints.
+### Interventions
 
-## Checkpoints
-Pre-trained SAVi and SOLD models are available in the [`checkpoints`](./checkpoints) directory.
-The SAVi checkpoints can be used to begin training SOLD models right away.
-Each checkpoint also includes corresponding TensorBoard logs, allowing you to visualize the expected training dynamics:
-```bash
-tensorboard --logdir checkpoints
+The dynamics model supports intervention dictionaries:
+
+```python
+{"object_mask": object_mask}
+{"relation_mask": relation_mask}
+{"mechanism_scale": mechanism_scale}
 ```
 
+These can remove objects, cut directed relation edges, or perturb local mechanisms during rollout.
 
-## Citation
-If you find this work useful, please consider citing our paper as follows:
-```bibtex
-@inproceedings{sold2025mosbach,
-  title={SOLD: Slot Object-Centric Latent Dynamics Models for Relational Manipulation Learning from Pixels},
-  author={Malte Mosbach and Jan Niklas Ewertz and Angel Villar-Corrales and Sven Behnke},
-  booktitle={International Conference on Machine Learning (ICML)},
-  year={2025}
-}
+### Counterfactual MPC
+
+`CounterfactualMPCPlanner` samples candidate action sequences, evaluates factual rollouts and counterfactual rollouts,
+and optimizes:
+
+```text
+score = factual_return + alpha * robust_return - beta * factual_counterfactual_gap
 ```
+
+For continuous control it uses Gaussian CEM. For discrete domains, pass `discrete_actions` in the planner config to use
+categorical CEM over a fixed action table.
+
+## Current Status
+
+The repository contains the complete Do-World implementation layer, training hooks, evaluation script, and smoke tests.
+Full benchmark training still depends on installing the target simulator environments and preparing task datasets.
